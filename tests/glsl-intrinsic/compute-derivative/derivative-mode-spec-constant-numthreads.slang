@@ -1,13 +1,17 @@
-//TEST:SIMPLE(filecheck=CHECK_SPV_QUAD): -stage compute -entry computeMain -target spirv -DQUAD
-//TEST:SIMPLE(filecheck=CHECK_SPV_LINEAR): -stage compute -entry computeMain -target spirv -DLINEAR
-//TEST:SIMPLE(filecheck=CHECK_GLSL_QUAD): -stage compute -entry computeMain -target glsl -DQUAD
-//TEST:SIMPLE(filecheck=CHECK_VIA_GLSL_QUAD): -stage compute -entry computeMain -target spirv -emit-spirv-via-glsl -DQUAD
-//TEST:SIMPLE(filecheck=CHECK_VIA_GLSL_LINEAR): -stage compute -entry computeMain -target spirv -emit-spirv-via-glsl -DLINEAR
+//TEST:SIMPLE(diag=CHECK_SPV_QUAD): -stage compute -entry computeMain -target spirv -DQUAD
+//TEST:SIMPLE(diag=CHECK_SPV_QUAD): -stage compute -entry computeMain -target spirv -DQUAD -DTHREAD_COUNT_DEFAULT=3
+//TEST:SIMPLE(diag=CHECK_SPV_LINEAR): -stage compute -entry computeMain -target spirv -DLINEAR
+//TEST:SIMPLE(diag=CHECK_SPV_LINEAR): -stage compute -entry computeMain -target spirv -DLINEAR -DTHREAD_COUNT_DEFAULT=3
+//TEST:SIMPLE(diag=CHECK_GLSL_QUAD): -stage compute -entry computeMain -target glsl -DQUAD
+//TEST:SIMPLE(diag=CHECK_VIA_GLSL_QUAD): -stage compute -entry computeMain -target spirv -emit-spirv-via-glsl -DQUAD
+//TEST:SIMPLE(diag=CHECK_VIA_GLSL_LINEAR): -stage compute -entry computeMain -target spirv -emit-spirv-via-glsl -DLINEAR
 //TEST:SIMPLE(diag=CHECK_ERR): -stage compute -entry computeMain -target spirv -DQUAD_ODD_X
 
 // A workgroup size given by specialization constants (SPIR-V `LocalSizeId`,
 // GLSL `local_size_*_id`) is allowed with compute derivative groups; Vulkan
 // validates the resolved size at pipeline creation time.
+// The test runs each SPIR-V mode with a valid default of 8 and an invalid
+// default of 3. Both must compile because the specialization value can change.
 
 // CHECK_SPV_QUAD-DAG: OpExecutionModeId %computeMain LocalSizeId
 // CHECK_SPV_QUAD-DAG: OpExecutionMode %computeMain DerivativeGroupQuads{{NV|KHR}}
@@ -26,11 +30,15 @@
 // CHECK_VIA_GLSL_LINEAR-DAG: OpExecutionMode %main DerivativeGroupLinear{{NV|KHR}}
 // CHECK_VIA_GLSL_LINEAR-DAG: SpecId 0
 
+#ifndef THREAD_COUNT_DEFAULT
+#define THREAD_COUNT_DEFAULT 8
+#endif
+
 [vk::constant_id(0)]
-const int threadCountX = 8;
+const int threadCountX = THREAD_COUNT_DEFAULT;
 
 [vk::constant_id(1)]
-const int threadCountY = 8;
+const int threadCountY = THREAD_COUNT_DEFAULT;
 
 RWStructuredBuffer<float> outputBuffer;
 
