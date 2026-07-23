@@ -2453,6 +2453,18 @@ IRType* dropNormAttributes(IRType* const t)
     return t;
 }
 
+/// Gets a literal thread count, unwrapping a specialization constant's default when needed.
+static IRIntLit* _getDefaultThreadCount(IRInst* threadCount)
+{
+    if (auto intLit = as<IRIntLit>(threadCount))
+        return intLit;
+
+    auto defaultValueDecor =
+        cast<IRGlobalParam>(threadCount)->findDecoration<IRDefaultValueDecoration>();
+    SLANG_RELEASE_ASSERT(defaultValueDecor);
+    return cast<IRIntLit>(defaultValueDecor->getOperand(0));
+}
+
 void verifyComputeDerivativeGroupModifiers(
     DiagnosticSink* sink,
     SourceLoc errorLoc,
@@ -2469,23 +2481,19 @@ void verifyComputeDerivativeGroupModifiers(
             Diagnostics::OnlyOneOfDerivativeGroupLinearOrQuadCanBeSet{.location = errorLoc});
     }
 
-    // A thread-group axis can only be validated when it is a compile-time literal.
-    // Specialization constants (`OpExecutionModeId LocalSizeId`) must be validated at
-    // pipeline creation time.
-    IRIntLit* xLit = numThreadsDecor->getX();
-    IRIntLit* yLit = numThreadsDecor->getY();
-    IRIntLit* zLit = numThreadsDecor->getZ();
+    IRIntegerValue x = _getDefaultThreadCount(numThreadsDecor->getOperand(0))->getValue();
+    IRIntegerValue y = _getDefaultThreadCount(numThreadsDecor->getOperand(1))->getValue();
+    IRIntegerValue z = _getDefaultThreadCount(numThreadsDecor->getOperand(2))->getValue();
 
     if (quadAttr)
     {
-        if ((xLit && xLit->getValue() % 2 != 0) || (yLit && yLit->getValue() % 2 != 0))
+        if (x % 2 != 0 || y % 2 != 0)
             sink->diagnose(
                 Diagnostics::DerivativeGroupQuadMustBeMultiple2ForXyThreads{.location = errorLoc});
     }
     else if (linearAttr)
     {
-        if (xLit && yLit && zLit &&
-            (xLit->getValue() * yLit->getValue() * zLit->getValue()) % 4 != 0)
+        if ((x * y * z) % 4 != 0)
             sink->diagnose(Diagnostics::DerivativeGroupLinearMustBeMultiple4ForTotalThreadCount{
                 .location = errorLoc});
     }
