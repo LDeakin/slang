@@ -535,6 +535,7 @@ void initCommandOptions(CommandOptions& options)
          "-o",
          "-o <path>",
          "Specify a path where generated output should be written.\n"
+         "Use `-` to write generated output to stdout. "
          "If no -target or -stage is specified, one may be inferred "
          "from file extension (see <file-extension>). "
          "If multiple -target options and a single -entry are present, each -o "
@@ -949,7 +950,17 @@ void initCommandOptions(CommandOptions& options)
         {OptionKind::EmitSeparateDebug,
          "-separate-debug-info",
          nullptr,
-         "Emit debug data to a separate file, and strip it from the main output file."},
+         "Emit debug data to a separate file, and strip it from the main output file. By default, "
+         "the debug file path is derived from the main `-o <path>` output as a fallback. Use "
+         "`-separate-debug-info-output <path>` to override it or when the main artifact is written "
+         "to stdout."},
+        {OptionKind::SeparateDebugInfoOutput,
+         "-separate-debug-info-output",
+         "-separate-debug-info-output <path>",
+         "Write separate debug information to an explicit sidecar path, overriding the fallback "
+         "path derived from `-o <path>`. Requires `-separate-debug-info` and allows the main "
+         "artifact to be written to stdout. Use `-` to write the separate debug information to "
+         "stdout when the main artifact is written to a file."},
         {OptionKind::EmitCPUViaCPP,
          "-emit-cpu-via-cpp",
          nullptr,
@@ -3127,7 +3138,7 @@ SlangResult OptionsParser::_parse(int argc, char const* const* argv)
             {
                 // -fvk-{b|s|t|u}-shift <binding-shift> <set>
                 const auto slice = arg.value.getUnownedSlice().subString(5, 1);
-                HLSLToVulkanLayoutOptions::Kind kind;
+                HLSLToVulkanLayoutOptions::Kind kind = HLSLToVulkanLayoutOptions::Kind::Invalid;
                 SLANG_RETURN_ON_FAIL(_getValue(arg, slice, kind));
 
                 Int shift;
@@ -3542,14 +3553,14 @@ SlangResult OptionsParser::_parse(int argc, char const* const* argv)
             }
         case OptionKind::LineDirectiveMode:
             {
-                SlangLineDirectiveMode value;
+                SlangLineDirectiveMode value = SLANG_LINE_DIRECTIVE_MODE_DEFAULT;
                 SLANG_RETURN_ON_FAIL(_expectValue(value));
                 m_compileRequest->setLineDirectiveMode(value);
                 break;
             }
         case OptionKind::FloatingPointMode:
             {
-                FloatingPointMode value;
+                FloatingPointMode value = FloatingPointMode::Default;
                 SLANG_RETURN_ON_FAIL(_expectValue(value));
                 setFloatingPointMode(getCurrentTarget(), value);
                 break;
@@ -3594,7 +3605,7 @@ SlangResult OptionsParser::_parse(int argc, char const* const* argv)
         case OptionKind::FileSystem:
             {
                 typedef TypeTextUtil::FileSystemType FileSystemType;
-                FileSystemType value;
+                FileSystemType value = FileSystemType::Default;
                 SLANG_RETURN_ON_FAIL(_expectValue(value));
 
                 switch (value)
@@ -4008,6 +4019,13 @@ SlangResult OptionsParser::_parse(int argc, char const* const* argv)
                 // This will emit a separate debug file, containing all debug info in
                 // a .dbg.spv file. The main output SPIRV will have all debug info stripped.
                 linkage->m_optionSet.set(OptionKind::EmitSeparateDebug, true);
+                break;
+            }
+        case OptionKind::SeparateDebugInfoOutput:
+            {
+                CommandLineArg outputPath;
+                SLANG_RETURN_ON_FAIL(m_reader.expectArg(outputPath));
+                linkage->m_optionSet.set(OptionKind::SeparateDebugInfoOutput, outputPath.value);
                 break;
             }
         case OptionKind::EmitCPUViaCPP:
@@ -4448,6 +4466,67 @@ SlangResult OptionsParser::_parse(int argc, char const* const* argv)
                     .profile = Profile(rawTarget.optionSet.getProfileVersion()).getName(),
                     .target =
                         TypeTextUtil::getCompileTargetName(SlangCompileTarget(rawTarget.format))});
+            }
+
+            // Reject a `-capability` that raises the emitted version above what an explicit
+            // `-profile` pins. Only run when the profile's family matches the target's version
+            // family: a cross-family profile (e.g. `glsl_450` on a SPIR-V target) contributes
+            // version atoms that would misread as a pin, wrongly flagging `-profile
+            // glsl_450+spirv_1_4`.
+            Profile profile = rawTarget.optionSet.getProfile();
+            CapabilityAtom targetVersionFamily = CapabilityAtom::Invalid;
+            switch (profile.getFamily())
+            {
+            case ProfileFamily::SPIRV:
+                // `isSPIRV`, not `isKhronosTarget`: the GLSL text target emits no SPIR-V version.
+                if (isSPIRV(rawTarget.format))
+                    targetVersionFamily = CapabilityAtom::_spirv_1_0;
+                break;
+            case ProfileFamily::METAL:
+                if (isMetalTarget(rawTarget.format))
+                    targetVersionFamily = CapabilityAtom::metallib_2_3;
+                break;
+            case ProfileFamily::DX:
+                if (isD3DTarget(rawTarget.format))
+                    targetVersionFamily = CapabilityAtom::_sm_4_0;
+                break;
+            case ProfileFamily::GLSL:
+                if (rawTarget.format == CodeGenTarget::GLSL)
+                    targetVersionFamily = CapabilityAtom::_GLSL_130;
+                break;
+            default:
+                break;
+            }
+            if (!rawTarget.conflictingProfilesSet && targetVersionFamily != CapabilityAtom::Invalid)
+            {
+                // Collect the explicit `-capability` atoms, then ask once whether — folded in the
+                // way `getTargetCaps()` folds them — they raise the emitted target version above
+                // what the profile pins.
+                List<CapabilityName> requestedCapabilities;
+                for (auto atomVal : rawTarget.optionSet.getArray(CompilerOptionName::Capability))
+                {
+                    CapabilityName capabilityName = CapabilityName::Invalid;
+                    switch (atomVal.kind)
+                    {
+                    case CompilerOptionValueKind::Int:
+                        capabilityName = CapabilityName(atomVal.intValue);
+                        break;
+                    case CompilerOptionValueKind::String:
+                        capabilityName = findCapabilityName(atomVal.stringValue.getUnownedSlice());
+                        break;
+                    }
+                    if (capabilityName != CapabilityName::Invalid)
+                        requestedCapabilities.add(capabilityName);
+                }
+
+                if (doRequestedCapabilitiesRaiseTargetVersionAboveProfile(
+                        profile.getCapabilityName(),
+                        requestedCapabilities,
+                        targetVersionFamily))
+                {
+                    m_sink->diagnose(Diagnostics::ConflictingExplicitCapabilityAndProfile{
+                        .profile = profile.getName()});
+                }
             }
         }
 

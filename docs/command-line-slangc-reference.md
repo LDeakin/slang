@@ -178,7 +178,7 @@ Set the module name to use when compiling multiple .slang source files into a si
 
 Specify a path where generated output should be written. 
 
-If no [-target](#target-2) or [-stage](#stage-1) is specified, one may be inferred from file extension (see [&lt;file-extension&gt;](#file-extension)). If multiple [-target](#target-2) options and a single [-entry](#entry) are present, each [-o](#o) associates with the first [-target](#target-2) to its left. Otherwise, if multiple [-entry](#entry) options are present, each [-o](#o) associates with the first [-entry](#entry) to its left, and with the [-target](#target-2) that matches the one inferred from &lt;path&gt;. 
+Use `-` to write generated output to stdout. If no [-target](#target-2) or [-stage](#stage-1) is specified, one may be inferred from file extension (see [&lt;file-extension&gt;](#file-extension)). If multiple [-target](#target-2) options and a single [-entry](#entry) are present, each [-o](#o) associates with the first [-target](#target-2) to its left. Otherwise, if multiple [-entry](#entry) options are present, each [-o](#o) associates with the first [-entry](#entry) to its left, and with the [-target](#target-2) that matches the one inferred from &lt;path&gt;. 
 
 
 <a id="profile"></a>
@@ -659,7 +659,15 @@ When generating SPIRV with spvDescriptorHeapEXT, emit each resource descriptor-h
 
 <a id="separate-debug-info"></a>
 ### -separate-debug-info
-Emit debug data to a separate file, and strip it from the main output file. 
+Emit debug data to a separate file, and strip it from the main output file. By default, the debug file path is derived from the main `-o &lt;path&gt;` output as a fallback. Use `-separate-debug-info-output &lt;path&gt;` to override it or when the main artifact is written to stdout. 
+
+
+<a id="separate-debug-info-output"></a>
+### -separate-debug-info-output
+
+**-separate-debug-info-output &lt;path&gt;**
+
+Write separate debug information to an explicit sidecar path, overriding the fallback path derived from `-o &lt;path&gt;`. Requires `-separate-debug-info` and allows the main artifact to be written to stdout. Use `-` to write the separate debug information to stdout when the main artifact is written to a file. 
 
 
 <a id="emit-cpu-via-cpp"></a>
@@ -1226,7 +1234,7 @@ Optimization Level
 
 Debug Level 
 
-* `0`, `none` : Don't emit debug information at all. 
+* `0`, `none` : Don't emit debug information. This is the default. For SPIR-V, OpSource, OpName and OpMemberName are still emitted. 
 * `1`, `minimal` : Emit as little debug information as possible, while still supporting stack traces. 
 * `2`, `standard` : Emit whatever is the standard level of debug information for each target. 
 * `3`, `maximal` : Emit as much debug information as possible for each target. 
